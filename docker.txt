@@ -1,0 +1,95 @@
+######################### 官方 Mysql ####################
+docker.io/tomcat                                       9.0.36-jdk8-openjdk   b79665757bae        3 weeks ago         530 MB
+docker.io/mysql                                        5.7                   9cfcce23593a        3 weeks ago         448 MB
+
+#####初始化脚本
+#!/bin/bash
+dtdbcnt=`mysqlshow -uroot -proot_pwd|grep dt|wc -l`
+if [ $dtdbcnt -eq "0" ] ; then
+	mysql -uroot -p$MYSQL_ROOT_PASSWORD <<EOF
+	CREATE DATABASE IF NOT EXISTS dt default charset utf8 COLLATE utf8_general_ci;
+	set names utf8;
+	use dt;
+	source /tmp/dt.sql
+EOF
+else
+	echo "db is exits"
+fi
+exit 0
+
+
+
+
+
+######################## 正式部署  ####################
+#部署数据库
+docker run --name dt-db -t \
+-e MYSQL_USER="dt" \
+-e MYSQL_PASSWORD="dt_pwd" \
+-e MYSQL_ROOT_PASSWORD=root_pwd \
+-v /data/mysql:/var/lib/mysql  \
+-p 3306:3306 \
+-d docker.io/algernonking/dtmysql:2.2.8 \
+--character-set-server=utf8 \
+--lower_case_table_names=1
+
+#部署应用
+docker run --name dt-appt -t \
+-v /data/upload:/usr/local/tomcat/webapps/dt/upload  \
+--link=dt-db:db \
+-p 3367:8080  \
+-d docker.io/algernonking/dtapp:2.2.9
+
+
+
+
+######################## 正式部署  ####################
+sed -i "s/127.0.0.1/$DB_PORT_3306_TCP_ADDR/g"   /usr/local/tomcat/webapps/dt/WEB-INF/classes/config.properties
+sed -i "s/$DB_PORT_3306_TCP_ADDR/127.0.0.1/g"   /usr/local/tomcat/webapps/dt/WEB-INF/classes/config.properties
+
+
+##################################################
+开发测试
+docker run --name dt-dbdev -t \
+-e MYSQL_USER="dt" \
+-e MYSQL_PASSWORD="dt_pwd" \
+-e MYSQL_ROOT_PASSWORD=root_pwd \
+-v /data/mysql2:/var/lib/mysql  \
+-p 10050:3306 \
+-d mysql:5.7 \
+--character-set-server=utf8 \
+--lower_case_table_names=1 \
+
+
+docker push [repository]:[tag]
+
+docker login
+
+docker logs -f 4e8bdf7424ae
+
+
+mysqldump -uroot -proot_pwd  --databases  dt >dt.sql
+
+
+
+#进入容器
+docker exec -it 8aa56c24ab28 bash
+
+$DB_PORT_3306_TCP_ADDR
+
+#备份
+docker exec a74ba2038307 sh -c 'exec mysqldump --all-databases -uroot -p"$MYSQL_ROOT_PASSWORD"' > /some/path/on/your/host/all-databases.sql
+
+#容器copy
+docker cp  e5a79f19b37e:/usr/local/tomcat/bin/catalina.sh /tmp
+docker cp /tmp/catalina.sh e5a79f19b37e:/usr/local/tomcat/bin/
+docker cp /tmp/dt/dt.tar d0c451d7214a:/usr/local/tomcat/webapps/
+
+docker cp /tmp/dt.sql a77fb43d55ac:/tmp/dt.sql
+
+#容器转为镜像
+docker commit -m "Added Mysql database Version 2.2.10"  -a "algernonking" a77fb43d55ac docker.io/algernonking/dtmysql:2.2.10
+docker commit -m "Added APP Tomcat Version 2.2.10"  -a "algernonking" d0c451d7214a docker.io/algernonking/dtapp:2.2.10
+
+docker push docker.io/algernonking/dtmysql:2.2.9
+docker push docker.io/algernonking/dtapp:2.2.9
